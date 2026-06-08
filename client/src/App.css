@@ -1,10 +1,20 @@
 .app {
   display: flex;
-  height: 100vh;
-  background-color: #f5f7fa;
+  min-height: 100vh;
+  background-color: #eef2f6;
 }
 
 .main-content {
   flex: 1;
   overflow-y: auto;
+}
+
+.boot-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #101820;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
 }
