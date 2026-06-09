@@ -70,13 +70,13 @@ const fallbackClients = [
   { _id: 'client-3', name: 'Neha Rao', company: 'Nexus Retail', email: 'neha@nexus.example' },
 ];
 
-const n8nEndpoints = [
+const apiEndpoints = [
   { label: 'Register user', path: '/auth/register' },
   { label: 'Login user', path: '/auth/login' },
   { label: 'Dashboard data', path: '/dashboard' },
-  { label: 'Create client', path: '/clients/create' },
-  { label: 'Create invoice', path: '/invoices/create' },
-  { label: 'Send reminder', path: '/reminders/send' },
+  { label: 'Create client', path: '/clients' },
+  { label: 'Create invoice', path: '/invoices' },
+  { label: 'Send reminder', path: '/n8n/reminders/:id/send' },
 ];
 
 const formatCurrency = (amount, currency = 'INR') =>
@@ -100,10 +100,10 @@ function Dashboard({ user, onLogout }) {
     setApiMessage('');
 
     try {
-      const { data } = await api.post('/dashboard', { userId: user.id, email: user.email });
+      const { data } = await api.get('/dashboard');
       setDashboard(data);
     } catch (error) {
-      setApiMessage('n8n dashboard webhook is not responding yet. Showing demo data while you build or activate the workflow.');
+      setApiMessage('Could not load dashboard data from server. Showing demo data.');
       setDashboard({
         stats: {
           totalAmount: 154500,
@@ -152,11 +152,7 @@ function Dashboard({ user, onLogout }) {
     setApiMessage('');
 
     try {
-      const { data } = await api.post('/reminders/send', {
-        invoiceId: invoice._id,
-        userId: user.id,
-        invoice,
-      });
+      const { data } = await api.post(`/n8n/reminders/${invoice._id}/send`);
       setApiMessage(data.message || 'Reminder sent to n8n workflow.');
     } catch (error) {
       setApiMessage(error.response?.data?.message || 'Could not send reminder to n8n.');
@@ -178,9 +174,9 @@ function Dashboard({ user, onLogout }) {
 
           <section className="n8n-strip">
             <div>
-              <span className="connector-pill"><FiShield /> n8n backend mode</span>
-              <h2>React is now calling n8n webhooks directly.</h2>
-              <p>Build and activate these workflows in n8n, then MongoDB, AI, reminders, and payments all run from your automation layer.</p>
+              <span className="connector-pill"><FiShield /> Express + n8n</span>
+              <h2>Auth and data run on Express. Reminders are powered by n8n.</h2>
+              <p>Login, signup, dashboard, invoices, and clients are handled by your Express server. n8n handles AI-powered payment reminders.</p>
             </div>
             <button className="outline-action" onClick={() => setActiveTab('bot')}>
               View endpoints <FiArrowRight />
@@ -268,9 +264,9 @@ function Dashboard({ user, onLogout }) {
       return (
         <section className="dashboard-grid">
           <div className="panel wide-panel">
-            <PanelTitle icon={FiMessageSquare} title="n8n workflow map" action="Webhook API" />
+            <PanelTitle icon={FiMessageSquare} title="API endpoint map" action="Express + n8n" />
             <div className="workflow">
-              {['React request', 'Webhook', 'MongoDB', 'AI message', 'Respond'].map((step, index) => (
+              {['React request', 'Express API', 'MongoDB', 'AI message', 'Respond'].map((step, index) => (
                 <div className="workflow-step" key={step}>
                   <span>{index + 1}</span>
                   <strong>{step}</strong>
@@ -278,7 +274,7 @@ function Dashboard({ user, onLogout }) {
               ))}
             </div>
             <div className="endpoint-list">
-              {n8nEndpoints.map((endpoint) => (
+              {apiEndpoints.map((endpoint) => (
                 <div key={endpoint.path}>
                   <strong>{endpoint.label}</strong>
                   <code>{endpoint.path}</code>
@@ -292,8 +288,8 @@ function Dashboard({ user, onLogout }) {
             <label className="toggle-row"><input type="checkbox" defaultChecked /> MongoDB Atlas credential saved</label>
             <label className="toggle-row"><input type="checkbox" /> Email or WhatsApp credential connected</label>
             <div className="webhook-base">
-              <span>Webhook base</span>
-              <code>{process.env.REACT_APP_N8N_WEBHOOK_BASE || 'http://localhost:5678/webhook'}</code>
+              <span>API base</span>
+              <code>{process.env.REACT_APP_API_BASE || 'http://localhost:5000/api'}</code>
             </div>
           </div>
         </section>
@@ -321,8 +317,8 @@ function Dashboard({ user, onLogout }) {
           <div><span>Signed in as</span><strong>{user.email}</strong></div>
           <div><span>Company</span><strong>{user.company || 'Not set'}</strong></div>
           <div><span>Timezone</span><strong>{user.timezone || 'UTC'}</strong></div>
-          <div><span>Backend mode</span><strong>n8n webhooks</strong></div>
-          <div><span>Webhook base</span><strong>{process.env.REACT_APP_N8N_WEBHOOK_BASE || 'localhost:5678'}</strong></div>
+          <div><span>Backend mode</span><strong>Express server</strong></div>
+          <div><span>API base</span><strong>{process.env.REACT_APP_API_BASE || 'http://localhost:5000/api'}</strong></div>
         </div>
       </section>
     );

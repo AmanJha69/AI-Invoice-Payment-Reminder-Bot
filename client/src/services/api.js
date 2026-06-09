@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: process.env.REACT_APP_N8N_WEBHOOK_BASE || 'http://localhost:5678/webhook',
+  baseURL: process.env.REACT_APP_API_BASE || 'http://localhost:5000/api',
 });
 
 api.interceptors.request.use((config) => {

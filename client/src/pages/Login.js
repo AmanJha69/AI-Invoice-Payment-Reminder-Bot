@@ -83,7 +83,7 @@ function Login({ onLogin }) {
 
           <div className="auth-heading">
             <h2>{mode === 'login' ? 'Welcome back' : 'Create your workspace'}</h2>
-            <p>{mode === 'login' ? 'Access your n8n-powered reminder operations.' : 'Create the account through your n8n register workflow.'}</p>
+            <p>{mode === 'login' ? 'Access your invoice dashboard.' : 'Create your account to get started.'}</p>
           </div>
 
           <form onSubmit={handleSubmit} className="auth-form">
@@ -125,8 +125,8 @@ function Login({ onLogin }) {
               <FiArrowRight />
             </button>
             <div className="n8n-auth-note">
-              <strong>n8n endpoint</strong>
-              <span>{mode === 'login' ? '/auth/login' : '/auth/register'}</span>
+              <strong>API endpoint</strong>
+              <span>{mode === 'login' ? '/api/auth/login' : '/api/auth/register'}</span>
             </div>
           </form>
         </div>
