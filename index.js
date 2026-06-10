@@ -9,6 +9,7 @@ const auth = require('./middleware/auth');
 const User = require('./models/user');
 const Invoice = require('./models/invoice');
 const Client = require('./models/client');
+const Activity = require('./models/activity');
 
 const app = express();
 
@@ -70,6 +71,14 @@ const buildInvoicePayload = (invoice, user) => ({
   },
 });
 
+const logActivity = async (userId, action, targetType, targetId, description, metadata = {}) => {
+  try {
+    await Activity.create({ userId, action, targetType, targetId, description, metadata });
+  } catch (err) {
+    console.error('Activity log error:', err.message);
+  }
+};
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password, company, phone } = req.body;
@@ -127,6 +136,7 @@ app.get('/api/clients', auth, async (req, res) => {
 app.post('/api/clients', auth, async (req, res) => {
   try {
     const client = await Client.create({ ...req.body, userId: req.userId });
+    await logActivity(req.userId, 'client_created', 'client', client._id, `Added client ${client.name}`);
     res.status(201).json(client);
   } catch (error) {
     res.status(400).json({ message: 'Could not create client', error: error.message });
@@ -148,6 +158,7 @@ app.post('/api/invoices', auth, async (req, res) => {
   try {
     const invoice = await Invoice.create({ ...req.body, userId: req.userId });
     const populatedInvoice = await invoice.populate('clientId', 'name email company');
+    await logActivity(req.userId, 'invoice_created', 'invoice', invoice._id, `Created invoice ${invoice.invoiceNumber}`, { amount: invoice.amount });
     res.status(201).json(populatedInvoice);
   } catch (error) {
     res.status(400).json({ message: 'Could not create invoice', error: error.message });
@@ -234,6 +245,7 @@ app.post('/api/n8n/reminders/:invoiceId/send', auth, async (req, res) => {
       });
     }
 
+    await logActivity(req.userId, 'reminder_sent', 'reminder', invoice._id, `Sent payment reminder for ${invoice.invoiceNumber} to ${invoice.clientId?.name || 'client'}`, { amount: invoice.amount });
     res.json({
       message: 'Reminder sent to n8n workflow',
       n8nStatus: n8nResponse.status,
@@ -273,6 +285,156 @@ app.post('/api/n8n/reminder-status', async (req, res) => {
     res.json({ message: 'Invoice status updated', invoice });
   } catch (error) {
     res.status(500).json({ message: 'Could not update reminder status', error: error.message });
+  }
+});
+
+// --- Single Invoice ---
+app.get('/api/invoices/:id', auth, async (req, res) => {
+  try {
+    const invoice = await Invoice.findOne({ _id: req.params.id, userId: req.userId })
+      .populate('clientId', 'name email company phone');
+    if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
+    res.json(invoice);
+  } catch (error) {
+    res.status(500).json({ message: 'Could not load invoice', error: error.message });
+  }
+});
+
+// --- Update Invoice ---
+app.put('/api/invoices/:id', auth, async (req, res) => {
+  try {
+    const invoice = await Invoice.findOneAndUpdate(
+      { _id: req.params.id, userId: req.userId },
+      req.body,
+      { new: true }
+    ).populate('clientId', 'name email company');
+    if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
+    await logActivity(req.userId, 'invoice_updated', 'invoice', invoice._id,
+      `Updated invoice ${invoice.invoiceNumber}`, { status: invoice.status });
+    res.json(invoice);
+  } catch (error) {
+    res.status(400).json({ message: 'Could not update invoice', error: error.message });
+  }
+});
+
+// --- Delete Invoice ---
+app.delete('/api/invoices/:id', auth, async (req, res) => {
+  try {
+    const invoice = await Invoice.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+    if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
+    await logActivity(req.userId, 'invoice_deleted', 'invoice', invoice._id,
+      `Deleted invoice ${invoice.invoiceNumber}`, { amount: invoice.amount });
+    res.json({ message: 'Invoice deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Could not delete invoice', error: error.message });
+  }
+});
+
+// --- Single Client with their invoices ---
+app.get('/api/clients/:id', auth, async (req, res) => {
+  try {
+    const client = await Client.findOne({ _id: req.params.id, userId: req.userId });
+    if (!client) return res.status(404).json({ message: 'Client not found' });
+    const invoices = await Invoice.find({ clientId: req.params.id, userId: req.userId })
+      .sort({ dueDate: -1 });
+    res.json({ client, invoices });
+  } catch (error) {
+    res.status(500).json({ message: 'Could not load client', error: error.message });
+  }
+});
+
+// --- Update Client ---
+app.put('/api/clients/:id', auth, async (req, res) => {
+  try {
+    const client = await Client.findOneAndUpdate(
+      { _id: req.params.id, userId: req.userId },
+      req.body,
+      { new: true }
+    );
+    if (!client) return res.status(404).json({ message: 'Client not found' });
+    await logActivity(req.userId, 'client_updated', 'client', client._id,
+      `Updated client ${client.name}`);
+    res.json(client);
+  } catch (error) {
+    res.status(400).json({ message: 'Could not update client', error: error.message });
+  }
+});
+
+// --- Delete Client ---
+app.delete('/api/clients/:id', auth, async (req, res) => {
+  try {
+    const client = await Client.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+    if (!client) return res.status(404).json({ message: 'Client not found' });
+    await logActivity(req.userId, 'client_deleted', 'client', client._id,
+      `Deleted client ${client.name}`);
+    res.json({ message: 'Client deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Could not delete client', error: error.message });
+  }
+});
+
+// --- Activity Logs ---
+app.get('/api/activity', auth, async (req, res) => {
+  try {
+    const activities = await Activity.find({ userId: req.userId })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    res.json(activities);
+  } catch (error) {
+    res.status(500).json({ message: 'Could not load activity logs', error: error.message });
+  }
+});
+
+// --- Send Invoice via n8n ---
+app.post('/api/n8n/invoices/:invoiceId/send', auth, async (req, res) => {
+  try {
+    if (!process.env.N8N_INVOICE_WEBHOOK_URL) {
+      return res.status(400).json({
+        message: 'N8N_INVOICE_WEBHOOK_URL is not configured in .env',
+      });
+    }
+
+    const [invoice, user] = await Promise.all([
+      Invoice.findOne({ _id: req.params.invoiceId, userId: req.userId }).populate('clientId'),
+      User.findById(req.userId),
+    ]);
+
+    if (!invoice) {
+      return res.status(404).json({ message: 'Invoice not found' });
+    }
+
+    const payload = buildInvoicePayload(invoice, user);
+    payload.event = 'invoice.send_requested';
+
+    const n8nResponse = await fetch(process.env.N8N_INVOICE_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Invoice-Bot-Secret': process.env.N8N_CALLBACK_SECRET || '',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const responseText = await n8nResponse.text();
+    if (!n8nResponse.ok) {
+      return res.status(502).json({
+        message: 'n8n webhook returned an error',
+        status: n8nResponse.status,
+        details: responseText,
+      });
+    }
+
+    await logActivity(req.userId, 'invoice_sent', 'invoice', invoice._id,
+      `Sent invoice ${invoice.invoiceNumber} to ${invoice.clientId?.name || 'client'}`,
+      { amount: invoice.amount });
+
+    res.json({
+      message: 'Invoice sent to n8n workflow',
+      n8nStatus: n8nResponse.status,
+      n8nResponse: responseText,
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Could not send invoice via n8n', error: error.message });
   }
 });
 

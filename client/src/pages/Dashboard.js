@@ -21,7 +21,14 @@ import {
   FiTrendingUp,
   FiUsers,
 } from 'react-icons/fi';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
+  LineChart, Line, PieChart, Pie, Cell, Legend
+} from 'recharts';
 import api from '../services/api';
+import CreateInvoiceModal from '../components/CreateInvoiceModal';
+import CreateClientModal from '../components/CreateClientModal';
+import InvoiceDetailModal from '../components/InvoiceDetailModal';
 import '../styles/Dashboard.css';
 
 const tabs = [
@@ -29,10 +36,13 @@ const tabs = [
   { id: 'invoices', label: 'Invoices', icon: FiFileText },
   { id: 'clients', label: 'Clients', icon: FiUsers },
   { id: 'reminders', label: 'Reminders', icon: FiBell },
+  { id: 'activity', label: 'Activity Logs', icon: FiActivity },
   { id: 'bot', label: 'AI Bot', icon: FiMessageSquare },
   { id: 'payments', label: 'Payments', icon: FiCreditCard },
   { id: 'settings', label: 'Settings', icon: FiSettings },
 ];
+
+const COLORS = ['#10b981', '#f59e0b', '#6366f1', '#ef4444', '#64748b'];
 
 const fallbackInvoices = [
   {
@@ -90,18 +100,29 @@ function Dashboard({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [dashboard, setDashboard] = useState({ stats: {}, invoices: [], clients: [] });
+  const [dashboard, setDashboard] = useState({ stats: {}, invoices: [], clients: [], activities: [] });
   const [loading, setLoading] = useState(true);
   const [apiMessage, setApiMessage] = useState('');
   const [sendingReminderId, setSendingReminderId] = useState('');
+
+  // Modal states
+  const [isCreateInvoiceOpen, setCreateInvoiceOpen] = useState(false);
+  const [isCreateClientOpen, setCreateClientOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
+  
+  // Filter states
+  const [statusFilter, setStatusFilter] = useState('all');
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setApiMessage('');
 
     try {
-      const { data } = await api.get('/dashboard');
-      setDashboard(data);
+      const [dashboardRes, activityRes] = await Promise.all([
+        api.get('/dashboard'),
+        api.get('/activity').catch(() => ({ data: [] }))
+      ]);
+      setDashboard({ ...dashboardRes.data, activities: activityRes.data });
     } catch (error) {
       setApiMessage('Could not load dashboard data from server. Showing demo data.');
       setDashboard({
@@ -129,15 +150,17 @@ function Dashboard({ user, onLogout }) {
 
   const invoices = dashboard.invoices?.length ? dashboard.invoices : fallbackInvoices;
   const clients = dashboard.clients?.length ? dashboard.clients : fallbackClients;
+  const activities = dashboard.activities || [];
   const stats = dashboard.stats || {};
 
   const filteredInvoices = useMemo(() => {
     const term = searchTerm.toLowerCase();
     return invoices.filter((invoice) => {
-      const clientName = invoice.clientId?.company || invoice.clientId?.name || '';
-      return `${invoice.invoiceNumber} ${clientName} ${invoice.status}`.toLowerCase().includes(term);
+      const matchesSearch = `${invoice.invoiceNumber} ${invoice.clientId?.company || ''} ${invoice.clientId?.name || ''} ${invoice.status}`.toLowerCase().includes(term);
+      const matchesStatus = statusFilter === 'all' || invoice.status === statusFilter;
+      return matchesSearch && matchesStatus;
     });
-  }, [invoices, searchTerm]);
+  }, [invoices, searchTerm, statusFilter]);
 
   const overdueInvoices = invoices.filter((invoice) => invoice.status === 'overdue' || new Date(invoice.dueDate) < new Date());
   const paidInvoices = invoices.filter((invoice) => invoice.status === 'paid');
@@ -169,7 +192,32 @@ function Dashboard({ user, onLogout }) {
             <MetricCard icon={FiDollarSign} label="Total receivables" value={formatCurrency(stats.totalAmount)} note={`${stats.invoiceCount || 0} invoices tracked`} tone="green" />
             <MetricCard icon={FiCheckCircle} label="Paid amount" value={formatCurrency(stats.paidAmount)} note={`${stats.collectionRate || 0}% collection rate`} tone="blue" />
             <MetricCard icon={FiClock} label="Overdue" value={formatCurrency(stats.overdueAmount)} note={`${stats.overdueCount || 0} invoices need action`} tone="red" />
-            <MetricCard icon={FiUsers} label="Clients" value={stats.clientCount || clients.length} note="MongoDB contacts" tone="yellow" />
+            <MetricCard icon={FiUsers} label="Clients" value={stats.clientCount || clients.length} note="Active clients" tone="yellow" />
+          </section>
+
+          <section className="dashboard-grid" style={{ marginTop: '24px' }}>
+            <div className="panel wide-panel">
+              <PanelTitle icon={FiTrendingUp} title="Invoice Status Breakdown" action="All time" />
+              <div style={{ width: '100%', height: 300 }}>
+                <ResponsiveContainer>
+                  <BarChart data={[
+                    { name: 'Paid', amount: stats.paidAmount || 0 },
+                    { name: 'Pending', amount: (stats.totalAmount || 0) - (stats.paidAmount || 0) - (stats.overdueAmount || 0) },
+                    { name: 'Overdue', amount: stats.overdueAmount || 0 }
+                  ]}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="name" />
+                    <YAxis tickFormatter={(val) => `₹${val/1000}k`} />
+                    <RechartsTooltip formatter={(val) => formatCurrency(val)} />
+                    <Bar dataKey="amount" radius={[4, 4, 0, 0]}>
+                      <Cell fill="#10b981" />
+                      <Cell fill="#f59e0b" />
+                      <Cell fill="#ef4444" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
           </section>
 
           <section className="n8n-strip">
@@ -199,31 +247,63 @@ function Dashboard({ user, onLogout }) {
               </div>
             </div>
             <div className="panel">
-              <PanelTitle icon={FiTrendingUp} title="AI performance" action="n8n" />
-              <div className="score-ring">
+              <PanelTitle icon={FiTrendingUp} title="Collection Rate" action="Analytics" />
+              <div className="score-ring" style={{ marginBottom: '20px' }}>
                 <span>{stats.collectionRate || 0}%</span>
-                <small>collection rate</small>
+                <small>collected</small>
               </div>
-              <div className="mini-stats">
-                <span>Due soon <strong>{stats.dueSoonCount || 0}</strong></span>
-                <span>Paid <strong>{paidInvoices.length}</strong></span>
+              <div style={{ width: '100%', height: 200 }}>
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={[
+                      { name: 'Collected', value: stats.paidAmount || 1 },
+                      { name: 'Outstanding', value: (stats.totalAmount || 0) - (stats.paidAmount || 0) || 1 }
+                    ]} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                      <Cell fill="#10b981" />
+                      <Cell fill="#e2e8f0" />
+                    </Pie>
+                    <RechartsTooltip formatter={(val) => formatCurrency(val)} />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
             </div>
           </section>
 
-          <InvoiceSection invoices={filteredInvoices} searchTerm={searchTerm} setSearchTerm={setSearchTerm} compact />
+          <InvoiceSection 
+            invoices={filteredInvoices} 
+            searchTerm={searchTerm} 
+            setSearchTerm={setSearchTerm} 
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            onOpenInvoice={setSelectedInvoice}
+            compact 
+          />
         </>
       );
     }
 
     if (activeTab === 'invoices') {
-      return <InvoiceSection invoices={filteredInvoices} searchTerm={searchTerm} setSearchTerm={setSearchTerm} />;
+      return (
+        <InvoiceSection 
+          invoices={filteredInvoices} 
+          searchTerm={searchTerm} 
+          setSearchTerm={setSearchTerm} 
+          statusFilter={statusFilter}
+          setStatusFilter={setStatusFilter}
+          onOpenInvoice={setSelectedInvoice}
+        />
+      );
     }
 
     if (activeTab === 'clients') {
       return (
         <section className="panel">
-          <PanelTitle icon={FiUsers} title="Client directory" action={`${clients.length} contacts`} />
+          <div className="table-toolbar" style={{ marginBottom: '20px' }}>
+            <PanelTitle icon={FiUsers} title="Client directory" action={`${clients.length} contacts`} />
+            <button className="create-button" onClick={() => setCreateClientOpen(true)}>
+              <FiPlus /> Add Client
+            </button>
+          </div>
           <div className="client-grid">
             {clients.map((client) => (
               <div className="client-card" key={client._id}>
@@ -255,6 +335,26 @@ function Dashboard({ user, onLogout }) {
                 </button>
               </div>
             ))}
+          </div>
+        </section>
+      );
+    }
+
+    if (activeTab === 'activity') {
+      return (
+        <section className="panel">
+          <PanelTitle icon={FiActivity} title="Activity Logs" action="Recent actions" />
+          <div className="timeline" style={{ padding: '20px' }}>
+            {activities.length > 0 ? activities.map(act => (
+              <div className="timeline-item" key={act._id}>
+                <span className={`status-dot ${act.targetType === 'invoice' ? 'sent' : act.targetType === 'client' ? 'paid' : 'overdue'}`} />
+                <div>
+                  <strong>{act.action.replace('_', ' ').toUpperCase()}</strong>
+                  <p>{act.description}</p>
+                  <small style={{ color: '#64748b' }}>{new Date(act.createdAt).toLocaleString()}</small>
+                </div>
+              </div>
+            )) : <p className="empty-state">No activity logs found yet.</p>}
           </div>
         </section>
       );
@@ -305,7 +405,7 @@ function Dashboard({ user, onLogout }) {
             <div><span>Outstanding</span><strong>{formatCurrency((stats.totalAmount || 0) - (stats.paidAmount || 0))}</strong></div>
             <div><span>Overdue</span><strong>{formatCurrency(stats.overdueAmount)}</strong></div>
           </div>
-          <InvoiceTable invoices={filteredInvoices} />
+          <InvoiceTable invoices={filteredInvoices} onOpenInvoice={setSelectedInvoice} />
         </section>
       );
     }
@@ -357,13 +457,33 @@ function Dashboard({ user, onLogout }) {
           </div>
           <div className="topbar-actions">
             <button className="icon-control" onClick={loadDashboard} aria-label="Refresh dashboard"><FiRefreshCw /></button>
-            <button className="create-button" onClick={() => setActiveTab('invoices')}><FiPlus /> New invoice</button>
+            <button className="create-button outline-action" onClick={() => setCreateClientOpen(true)}><FiUsers /> Add Client</button>
+            <button className="create-button" onClick={() => setCreateInvoiceOpen(true)}><FiPlus /> New invoice</button>
           </div>
         </header>
 
         {apiMessage && <div className="notice">{apiMessage}</div>}
         {loading ? <div className="panel loading-panel">Loading dashboard data...</div> : renderContent()}
       </main>
+
+      <CreateInvoiceModal 
+        isOpen={isCreateInvoiceOpen} 
+        onClose={() => setCreateInvoiceOpen(false)} 
+        onCreated={loadDashboard} 
+        clients={clients} 
+      />
+      <CreateClientModal 
+        isOpen={isCreateClientOpen} 
+        onClose={() => setCreateClientOpen(false)} 
+        onCreated={loadDashboard} 
+      />
+      <InvoiceDetailModal 
+        isOpen={!!selectedInvoice} 
+        onClose={() => setSelectedInvoice(null)} 
+        invoice={selectedInvoice} 
+        onUpdated={loadDashboard} 
+        onDeleted={loadDashboard} 
+      />
     </div>
   );
 }
@@ -388,22 +508,35 @@ function PanelTitle({ icon: Icon, title, action }) {
   );
 }
 
-function InvoiceSection({ invoices, searchTerm, setSearchTerm, compact }) {
+function InvoiceSection({ invoices, searchTerm, setSearchTerm, statusFilter, setStatusFilter, onOpenInvoice, compact }) {
   return (
     <section className="panel">
-      <div className="table-toolbar">
+      <div className="table-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '16px' }}>
         <PanelTitle icon={FiFileText} title={compact ? 'Recent invoices' : 'Invoice management'} action={`${invoices.length} shown`} />
-        <div className="search-box">
-          <FiSearch />
-          <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search invoice, client, status" />
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <select 
+            value={statusFilter} 
+            onChange={(e) => setStatusFilter(e.target.value)}
+            style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white' }}
+          >
+            <option value="all">All Statuses</option>
+            <option value="draft">Draft</option>
+            <option value="sent">Sent</option>
+            <option value="pending">Pending</option>
+            <option value="paid">Paid</option>
+            <option value="overdue">Overdue</option>
+          </select>
+          <div className="search-box">
+            <FiSearch />
+            <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search invoice..." />
+          </div>
         </div>
       </div>
-      <InvoiceTable invoices={compact ? invoices.slice(0, 5) : invoices} />
+      <InvoiceTable invoices={compact ? invoices.slice(0, 5) : invoices} onOpenInvoice={onOpenInvoice} />
     </section>
   );
 }
-
-function InvoiceTable({ invoices }) {
+function InvoiceTable({ invoices, onOpenInvoice }) {
   return (
     <div className="table-wrap">
       <table>
@@ -425,7 +558,7 @@ function InvoiceTable({ invoices }) {
               <td>{formatCurrency(invoice.amount, invoice.currency)}</td>
               <td>{new Date(invoice.dueDate).toLocaleDateString('en-IN')}</td>
               <td><span className={`status-pill ${invoice.status}`}>{invoice.status}</span></td>
-              <td><button className="small-button">Open</button></td>
+              <td><button className="small-button" onClick={() => onOpenInvoice && onOpenInvoice(invoice)}>Open</button></td>
             </tr>
           ))}
         </tbody>

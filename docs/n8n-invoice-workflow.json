@@ -1,0 +1,132 @@
+{
+  "name": "InvoiceBot - Send Invoice",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "invoice/send",
+        "options": {}
+      },
+      "id": "e1f185dc-b118-4e89-bd0f-f1bbd067edeb",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [ 220, 300 ],
+      "webhookId": "invoice/send"
+    },
+    {
+      "parameters": {
+        "model": "models/gemini-1.5-pro-latest",
+        "prompt": "={{ 'You are an AI assistant for ' + $json.body.user.company + '. Write a professional email to send a new invoice to a client.\\n\\nClient Name: ' + $json.body.client.name + '\\nClient Company: ' + $json.body.client.company + '\\nInvoice Number: ' + $json.body.invoice.invoiceNumber + '\\nAmount Due: ' + $json.body.invoice.currency + ' ' + $json.body.invoice.amount + '\\nDue Date: ' + $json.body.invoice.dueDate + '\\nDescription: ' + $json.body.invoice.description + '\\n\\nThe email should be polite and clearly state the invoice details and how to pay. Do not include subject line in the body, just the email body itself.' }}"
+      },
+      "id": "23a1f94d-7f55-408a-b86a-72322af5dfd3",
+      "name": "Google Gemini",
+      "type": "n8n-nodes-base.googleGemini",
+      "typeVersion": 1,
+      "position": [ 460, 300 ],
+      "credentials": {
+        "googleGeminiApi": {
+          "id": "YOUR_GEMINI_CREDENTIAL_ID",
+          "name": "Google Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $node.Webhook.json.body.client.email }}",
+        "subject": "={{ 'Invoice ' + $node.Webhook.json.body.invoice.invoiceNumber + ' from ' + $node.Webhook.json.body.user.company }}",
+        "message": "={{ $json.text }}",
+        "appendAttribution": false
+      },
+      "id": "4e18ac14-5d55-46c0-af44-2454b51829e1",
+      "name": "Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [ 700, 300 ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/api/n8n/reminder-status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Invoice-Bot-Secret",
+              "value": "change_this_callback_secret"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "invoiceId",
+              "value": "={{ $node.Webhook.json.body.invoice.id }}"
+            },
+            {
+              "name": "status",
+              "value": "sent"
+            },
+            {
+              "name": "notes",
+              "value": "Invoice sent via AI"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4eb0f7d4-8d96-419b-a01b-c3e07dbd48de",
+      "name": "Update Status Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [ 940, 300 ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Google Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini": {
+      "main": [
+        [
+          {
+            "node": "Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail": {
+      "main": [
+        [
+          {
+            "node": "Update Status Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f732439c-e722-4a00-ab6e-e72f10b784f1"
+}
