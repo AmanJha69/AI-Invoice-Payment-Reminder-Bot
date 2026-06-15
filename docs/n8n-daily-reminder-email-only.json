@@ -1,0 +1,142 @@
+{
+  "name": "InvoiceBot - Automated Daily Reminders (Email Only)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "e4414f52-870b-4861-bbba-c39f032ea07b",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5000/api/n8n/daily-checks",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Invoice-Bot-Secret",
+              "value": "your_n8n_secret_here"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2bc35fc2-8507-4228-a53b-e85d9b689a79",
+      "name": "Fetch Due Invoices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "invoices",
+        "options": {}
+      },
+      "id": "532a76f2-bb44-4865-9851-bc257c9183dc",
+      "name": "Item Lists",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 3,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gemini-pro",
+        "text": "Write a payment reminder email. The user is {{ $json.client.name }}. They owe {{ $json.invoice.currency }} {{ $json.invoice.amount }} for invoice {{ $json.invoice.invoiceNumber }}. The due date is {{ $json.invoice.dueDate }}. Mention they can view and pay their invoice securely here: http://localhost:3000/pay/{{$json.invoice.id}} . Include a Subject: line and the Body."
+      },
+      "id": "db00e8bc-6002-4467-9c9c-b26a63568c8b",
+      "name": "Generate Email (Gemini)",
+      "type": "n8n-nodes-base.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "your_email@gmail.com",
+        "toEmail": "={{ $json.client.email }}",
+        "subject": "={{ $json.text.split('\\n')[0].replace('Subject:', '').trim() }}",
+        "text": "={{ $json.text.split('\\n').slice(1).join('\\n').trim() }}"
+      },
+      "id": "b3e34b5c-44af-4b2a-874e-0a563abdbfdb",
+      "name": "Send an Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1000,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Due Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Due Invoices": {
+      "main": [
+        [
+          {
+            "node": "Item Lists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Item Lists": {
+      "main": [
+        [
+          {
+            "node": "Generate Email (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Email (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Send an Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c2f84b2c-674a-4a81-a6b0-f4632c258d4a"
+}

@@ -56,6 +56,17 @@ const CreateInvoiceModal = ({ isOpen, onClose, onCreated, clients }) => {
       setError('Please select a client');
       return;
     }
+
+    const validItems = items.filter(i => i.description.trim() !== '');
+    if (validItems.length === 0) {
+      setError('Please add at least one line item with a description.');
+      return;
+    }
+    
+    if (grandTotal <= 0) {
+      setError('Invoice total must be greater than zero.');
+      return;
+    }
     
     setLoading(true);
     setError('');
@@ -63,7 +74,7 @@ const CreateInvoiceModal = ({ isOpen, onClose, onCreated, clients }) => {
     const invoiceData = {
       ...formData,
       amount: grandTotal,
-      items: items.filter(i => i.description.trim() !== '')
+      items: validItems
     };
 
     try {

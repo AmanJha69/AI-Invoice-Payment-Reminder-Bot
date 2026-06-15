@@ -13,9 +13,25 @@ const Activity = require('./models/activity');
 
 const app = express();
 
+const rateLimit = require('express-rate-limit');
+
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10000, // Temporarily increased for testing (was 100)
+  message: { message: 'Too many requests from this IP, please try again after 15 minutes' }
+});
+
+const n8nLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5000, // Temporarily increased for testing (was 5)
+  message: { message: 'You have reached the maximum number of email automation requests for now. Please try again later.' }
+});
+
+app.use('/api/', globalLimiter);
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI)
@@ -62,6 +78,7 @@ const buildInvoicePayload = (invoice, user) => ({
         company: invoice.clientId.company,
       }
     : null,
+  notificationPreference: invoice.clientId?.notificationPreference || 'email',
   user: {
     id: user._id,
     name: user.name,
@@ -133,13 +150,38 @@ app.get('/api/clients', auth, async (req, res) => {
   }
 });
 
-app.post('/api/clients', auth, async (req, res) => {
+app.post('/api/clients', auth, async (req, res, next) => {
   try {
+    const { name, email } = req.body;
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return res.status(400).json({ message: 'Client name is required.' });
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (email && !emailRegex.test(email)) {
+      return res.status(400).json({ message: 'Invalid email format.' });
+    }
     const client = await Client.create({ ...req.body, userId: req.userId });
     await logActivity(req.userId, 'client_created', 'client', client._id, `Added client ${client.name}`);
     res.status(201).json(client);
   } catch (error) {
-    res.status(400).json({ message: 'Could not create client', error: error.message });
+    next(error);
+  }
+});
+
+app.delete('/api/clients/:id', auth, async (req, res, next) => {
+  try {
+    const client = await Client.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+    if (!client) {
+      return res.status(404).json({ message: 'Client not found or unauthorized.' });
+    }
+    
+    // Optionally delete all invoices associated with this client
+    await Invoice.deleteMany({ clientId: client._id });
+    
+    await logActivity(req.userId, 'client_deleted', 'client', client._id, `Deleted client ${client.name}`);
+    res.json({ message: 'Client and associated invoices deleted successfully.' });
+  } catch (error) {
+    next(error);
   }
 });
 
@@ -154,14 +196,24 @@ app.get('/api/invoices', auth, async (req, res) => {
   }
 });
 
-app.post('/api/invoices', auth, async (req, res) => {
+app.post('/api/invoices', auth, async (req, res, next) => {
   try {
+    const { clientId, amount, items } = req.body;
+    if (!clientId) {
+      return res.status(400).json({ message: 'Client is required to create an invoice.' });
+    }
+    if (typeof amount !== 'number' || amount <= 0) {
+      return res.status(400).json({ message: 'Invoice amount must be greater than zero.' });
+    }
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'At least one line item is required.' });
+    }
     const invoice = await Invoice.create({ ...req.body, userId: req.userId });
     const populatedInvoice = await invoice.populate('clientId', 'name email company');
     await logActivity(req.userId, 'invoice_created', 'invoice', invoice._id, `Created invoice ${invoice.invoiceNumber}`, { amount: invoice.amount });
     res.status(201).json(populatedInvoice);
   } catch (error) {
-    res.status(400).json({ message: 'Could not create invoice', error: error.message });
+    next(error);
   }
 });
 
@@ -209,7 +261,7 @@ app.get('/api/dashboard', auth, async (req, res) => {
   }
 });
 
-app.post('/api/n8n/reminders/:invoiceId/send', auth, async (req, res) => {
+app.post('/api/n8n/reminders/:invoiceId/send', n8nLimiter, auth, async (req, res) => {
   try {
     if (!process.env.N8N_REMINDER_WEBHOOK_URL) {
       return res.status(400).json({
@@ -386,7 +438,7 @@ app.get('/api/activity', auth, async (req, res) => {
 });
 
 // --- Send Invoice via n8n ---
-app.post('/api/n8n/invoices/:invoiceId/send', auth, async (req, res) => {
+app.post('/api/n8n/invoices/:invoiceId/send', n8nLimiter, auth, async (req, res) => {
   try {
     if (!process.env.N8N_INVOICE_WEBHOOK_URL) {
       return res.status(400).json({
@@ -436,6 +488,52 @@ app.post('/api/n8n/invoices/:invoiceId/send', auth, async (req, res) => {
   } catch (error) {
     res.status(500).json({ message: 'Could not send invoice via n8n', error: error.message });
   }
+});
+
+app.get('/api/n8n/daily-checks', async (req, res) => {
+  try {
+    const expectedSecret = process.env.N8N_CALLBACK_SECRET;
+    const receivedSecret = req.header('X-Invoice-Bot-Secret');
+
+    if (expectedSecret && receivedSecret !== expectedSecret) {
+      return res.status(401).json({ message: 'Invalid n8n callback secret' });
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const sevenDaysFromNow = new Date(today);
+    sevenDaysFromNow.setDate(today.getDate() + 7);
+
+    // Find invoices due today or exactly in 7 days, that are not paid/draft
+    const invoices = await Invoice.find({
+      status: { $nin: ['paid', 'draft'] },
+      $or: [
+        { dueDate: { $gte: today, $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000) } },
+        { dueDate: { $gte: sevenDaysFromNow, $lt: new Date(sevenDaysFromNow.getTime() + 24 * 60 * 60 * 1000) } }
+      ]
+    }).populate('clientId').populate('userId');
+
+    // Build payload for each
+    const payloads = invoices.map(inv => buildInvoicePayload(inv, inv.userId));
+    
+    res.json({ invoices: payloads });
+  } catch (error) {
+    res.status(500).json({ message: 'Error checking daily invoices', error: error.message });
+  }
+});
+
+// 404 Route Handler
+app.use((req, res, next) => {
+  res.status(404).json({ message: 'API route not found' });
+});
+
+// Global Error Handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled Server Error:', err.message);
+  res.status(err.status || 500).json({
+    message: err.message || 'Internal Server Error',
+  });
 });
 
 // Start Server

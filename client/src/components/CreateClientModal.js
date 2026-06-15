@@ -27,6 +27,23 @@ const CreateClientModal = ({ isOpen, onClose, onCreated }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    if (formData.name.trim() === '') {
+      setError('Client name cannot be empty');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
+    
+    if (formData.phone && formData.phone.replace(/\D/g, '').length < 7) {
+      setError('Please enter a valid phone number (at least 7 digits)');
+      return;
+    }
+
     setLoading(true);
     setError('');
 

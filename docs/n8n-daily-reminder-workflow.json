@@ -1,0 +1,242 @@
+{
+  "name": "InvoiceBot - Automated Daily Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "e4414f52-870b-4861-bbba-c39f032ea07b",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5000/api/n8n/daily-checks",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Invoice-Bot-Secret",
+              "value": "your_n8n_secret_here"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2bc35fc2-8507-4228-a53b-e85d9b689a79",
+      "name": "Fetch Due Invoices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "invoices",
+        "options": {}
+      },
+      "id": "532a76f2-bb44-4865-9851-bc257c9183dc",
+      "name": "Item Lists",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 3,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.notificationPreference }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "email",
+              "output": 0
+            },
+            {
+              "value2": "whatsapp",
+              "output": 1
+            },
+            {
+              "value2": "both",
+              "output": 2
+            }
+          ]
+        }
+      },
+      "id": "c1613f1c-7994-406a-a16f-706437905d4b",
+      "name": "Switch Preference",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gemini-pro",
+        "text": "Write a payment reminder email. The user is {{ $json.client.name }}. They owe {{ $json.invoice.currency }} {{ $json.invoice.amount }} for invoice {{ $json.invoice.invoiceNumber }}. The due date is {{ $json.invoice.dueDate }}. Include a Subject: line and the Body."
+      },
+      "id": "db00e8bc-6002-4467-9c9c-b26a63568c8b",
+      "name": "Generate Email (Gemini)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gemini-pro",
+        "text": "Write a short WhatsApp payment reminder. The user is {{ $json.client.name }}. They owe {{ $json.invoice.currency }} {{ $json.invoice.amount }} for invoice {{ $json.invoice.invoiceNumber }}. The due date is {{ $json.invoice.dueDate }}. Keep it friendly and concise for texting."
+      },
+      "id": "a1f5a5a2-97b7-41e9-bcc3-99b50e32f05a",
+      "name": "Generate WhatsApp (Gemini)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.client.email }}",
+        "subject": "={{ $json.text.split('\\n')[0].replace('Subject:', '').trim() }}",
+        "message": "={{ $json.text.split('\\n').slice(1).join('\\n').trim() }}",
+        "appendAttribution": false
+      },
+      "id": "b3e34b5c-44af-4b2a-874e-0a563abdbfdb",
+      "name": "Send Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1300,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "phoneNumberId": "your_phone_number_id",
+        "recipientPhoneNumber": "={{ $json.client.phone.replace(/[^0-9]/g, '') }}",
+        "text": "={{ $json.text }}"
+      },
+      "id": "f5e927f8-9da3-42e7-ad92-b4ea2d787c88",
+      "name": "Send WhatsApp",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Due Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Due Invoices": {
+      "main": [
+        [
+          {
+            "node": "Item Lists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Item Lists": {
+      "main": [
+        [
+          {
+            "node": "Switch Preference",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Preference": {
+      "main": [
+        [
+          {
+            "node": "Generate Email (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate WhatsApp (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Email (Gemini)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate WhatsApp (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Email (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Send Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate WhatsApp (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b1f84b2c-674a-4a81-a6b0-f4632c258d4a"
+}

@@ -12,12 +12,15 @@ import {
   FiLogOut,
   FiMenu,
   FiMessageSquare,
+  FiMoon,
   FiPlus,
   FiRefreshCw,
   FiSend,
   FiSearch,
   FiSettings,
   FiShield,
+  FiSun,
+  FiTrash2,
   FiTrendingUp,
   FiUsers,
 } from 'react-icons/fi';
@@ -96,7 +99,7 @@ const formatCurrency = (amount, currency = 'INR') =>
     maximumFractionDigits: 0,
   }).format(amount || 0);
 
-function Dashboard({ user, onLogout }) {
+function Dashboard({ user, onLogout, theme, toggleTheme }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -181,6 +184,22 @@ function Dashboard({ user, onLogout }) {
       setApiMessage(error.response?.data?.message || 'Could not send reminder to n8n.');
     } finally {
       setSendingReminderId('');
+    }
+  };
+
+  const deleteClient = async (clientId) => {
+    if (clientId.startsWith('demo-')) {
+      setApiMessage('Cannot delete demo clients.');
+      return;
+    }
+    if (window.confirm('Are you sure you want to delete this client? All their invoices will also be deleted.')) {
+      try {
+        await api.delete(`/clients/${clientId}`);
+        setApiMessage('Client deleted successfully.');
+        loadDashboard();
+      } catch (error) {
+        setApiMessage(error.response?.data?.message || 'Could not delete client.');
+      }
     }
   };
 
@@ -305,12 +324,23 @@ function Dashboard({ user, onLogout }) {
             </button>
           </div>
           <div className="client-grid">
-            {clients.map((client) => (
+            {clients.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)', gridColumn: '1 / -1', background: 'var(--bg-surface)', borderRadius: '12px', border: '1px dashed var(--border-color)' }}>
+                <p style={{ margin: 0, fontSize: '15px' }}>No clients found. Click "Add Client" to get started.</p>
+              </div>
+            ) : clients.map((client) => (
               <div className="client-card" key={client._id}>
                 <div className="avatar">{(client.company || client.name || 'C').charAt(0)}</div>
                 <strong>{client.company || client.name}</strong>
                 <span>{client.name}</span>
                 <p>{client.email}</p>
+                <button 
+                  onClick={() => deleteClient(client._id)} 
+                  style={{ position: 'absolute', top: '12px', right: '12px', background: 'transparent', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', padding: '4px' }}
+                  title="Delete Client"
+                >
+                  <FiTrash2 />
+                </button>
               </div>
             ))}
           </div>
@@ -456,6 +486,9 @@ function Dashboard({ user, onLogout }) {
             <h1>{tabs.find((tab) => tab.id === activeTab)?.label}</h1>
           </div>
           <div className="topbar-actions">
+            <button className="icon-control" onClick={toggleTheme} aria-label="Toggle theme">
+              {theme === 'light' ? <FiMoon /> : <FiSun />}
+            </button>
             <button className="icon-control" onClick={loadDashboard} aria-label="Refresh dashboard"><FiRefreshCw /></button>
             <button className="create-button outline-action" onClick={() => setCreateClientOpen(true)}><FiUsers /> Add Client</button>
             <button className="create-button" onClick={() => setCreateInvoiceOpen(true)}><FiPlus /> New invoice</button>
@@ -517,7 +550,7 @@ function InvoiceSection({ invoices, searchTerm, setSearchTerm, statusFilter, set
           <select 
             value={statusFilter} 
             onChange={(e) => setStatusFilter(e.target.value)}
-            style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white' }}
+            style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
           >
             <option value="all">All Statuses</option>
             <option value="draft">Draft</option>
@@ -551,7 +584,13 @@ function InvoiceTable({ invoices, onOpenInvoice }) {
           </tr>
         </thead>
         <tbody>
-          {invoices.map((invoice) => (
+          {invoices.length === 0 ? (
+            <tr>
+              <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                No invoices found. Click "New invoice" to get started.
+              </td>
+            </tr>
+          ) : invoices.map((invoice) => (
             <tr key={invoice._id}>
               <td><strong>{invoice.invoiceNumber}</strong></td>
               <td>{invoice.clientId?.company || invoice.clientId?.name || 'Unassigned'}</td>
