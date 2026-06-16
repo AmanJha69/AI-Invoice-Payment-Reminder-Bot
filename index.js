@@ -10,6 +10,10 @@ const User = require('./models/user');
 const Invoice = require('./models/invoice');
 const Client = require('./models/client');
 const Activity = require('./models/activity');
+const N8nQueue = require('./models/n8nQueue');
+const cron = require('node-cron');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 
@@ -261,6 +265,40 @@ app.get('/api/dashboard', auth, async (req, res) => {
   }
 });
 
+// --- Queue Helper Function ---
+async function sendOrQueueN8n(webhookUrl, payload, invoiceId, userId, clientId, taskType) {
+  try {
+    const n8nResponse = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Invoice-Bot-Secret': process.env.N8N_CALLBACK_SECRET || '',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const responseText = await n8nResponse.text();
+    if (!n8nResponse.ok) {
+      throw new Error(`n8n webhook error: ${n8nResponse.status} ${responseText}`);
+    }
+    return { success: true, message: 'Sent to n8n workflow' };
+  } catch (error) {
+    await N8nQueue.create({
+      invoiceId,
+      userId,
+      clientId,
+      payload,
+      status: 'pending',
+      errorLog: error.message
+    });
+    
+    const logLine = `[${new Date().toISOString()}] FAILED to send ${taskType} for Invoice ${invoiceId}: ${error.message}\n`;
+    fs.appendFileSync(path.join(__dirname, 'n8n-failures.log'), logLine);
+    
+    return { success: false, message: 'n8n offline or failed. Task securely queued for retry.' };
+  }
+}
+
 app.post('/api/n8n/reminders/:invoiceId/send', n8nLimiter, auth, async (req, res) => {
   try {
     if (!process.env.N8N_REMINDER_WEBHOOK_URL) {
@@ -279,29 +317,26 @@ app.post('/api/n8n/reminders/:invoiceId/send', n8nLimiter, auth, async (req, res
     }
 
     const payload = buildInvoicePayload(invoice, user);
-    const n8nResponse = await fetch(process.env.N8N_REMINDER_WEBHOOK_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Invoice-Bot-Secret': process.env.N8N_CALLBACK_SECRET || '',
-      },
-      body: JSON.stringify(payload),
-    });
+    
+    const result = await sendOrQueueN8n(
+      process.env.N8N_REMINDER_WEBHOOK_URL,
+      payload,
+      invoice._id,
+      user._id,
+      invoice.clientId?._id,
+      'reminder'
+    );
 
-    const responseText = await n8nResponse.text();
-    if (!n8nResponse.ok) {
-      return res.status(502).json({
-        message: 'n8n webhook returned an error',
-        status: n8nResponse.status,
-        details: responseText,
-      });
+    if (result.success) {
+      await logActivity(req.userId, 'reminder_sent', 'reminder', invoice._id, `Sent payment reminder for ${invoice.invoiceNumber} to ${invoice.clientId?.name || 'client'}`, { amount: invoice.amount });
+    } else {
+      await logActivity(req.userId, 'reminder_queued', 'reminder', invoice._id, `Queued payment reminder for ${invoice.invoiceNumber} (n8n offline)`);
     }
 
-    await logActivity(req.userId, 'reminder_sent', 'reminder', invoice._id, `Sent payment reminder for ${invoice.invoiceNumber} to ${invoice.clientId?.name || 'client'}`, { amount: invoice.amount });
     res.json({
-      message: 'Reminder sent to n8n workflow',
-      n8nStatus: n8nResponse.status,
-      n8nResponse: responseText,
+      message: result.message,
+      n8nStatus: result.success ? 200 : 503,
+      n8nResponse: result.message,
     });
   } catch (error) {
     res.status(500).json({ message: 'Could not send reminder to n8n', error: error.message });
@@ -458,32 +493,25 @@ app.post('/api/n8n/invoices/:invoiceId/send', n8nLimiter, auth, async (req, res)
     const payload = buildInvoicePayload(invoice, user);
     payload.event = 'invoice.send_requested';
 
-    const n8nResponse = await fetch(process.env.N8N_INVOICE_WEBHOOK_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Invoice-Bot-Secret': process.env.N8N_CALLBACK_SECRET || '',
-      },
-      body: JSON.stringify(payload),
-    });
+    const result = await sendOrQueueN8n(
+      process.env.N8N_INVOICE_WEBHOOK_URL,
+      payload,
+      invoice._id,
+      user._id,
+      invoice.clientId?._id,
+      'invoice'
+    );
 
-    const responseText = await n8nResponse.text();
-    if (!n8nResponse.ok) {
-      return res.status(502).json({
-        message: 'n8n webhook returned an error',
-        status: n8nResponse.status,
-        details: responseText,
-      });
+    if (result.success) {
+      await logActivity(req.userId, 'invoice_sent', 'invoice', invoice._id, `Sent invoice ${invoice.invoiceNumber} to ${invoice.clientId?.name || 'client'}`, { amount: invoice.amount });
+    } else {
+      await logActivity(req.userId, 'invoice_queued', 'invoice', invoice._id, `Queued invoice ${invoice.invoiceNumber} (n8n offline)`);
     }
 
-    await logActivity(req.userId, 'invoice_sent', 'invoice', invoice._id,
-      `Sent invoice ${invoice.invoiceNumber} to ${invoice.clientId?.name || 'client'}`,
-      { amount: invoice.amount });
-
     res.json({
-      message: 'Invoice sent to n8n workflow',
-      n8nStatus: n8nResponse.status,
-      n8nResponse: responseText,
+      message: result.message,
+      n8nStatus: result.success ? 200 : 503,
+      n8nResponse: result.message,
     });
   } catch (error) {
     res.status(500).json({ message: 'Could not send invoice via n8n', error: error.message });
@@ -522,6 +550,114 @@ app.get('/api/n8n/daily-checks', async (req, res) => {
     res.status(500).json({ message: 'Error checking daily invoices', error: error.message });
   }
 });
+
+// --- Queue Processor & Cron Job ---
+app.get('/api/n8n/status', auth, async (req, res) => {
+  try {
+    const recentFails = await N8nQueue.countDocuments({
+      status: 'failed',
+      lastAttempt: { $gte: new Date(Date.now() - 60 * 60 * 1000) } // Last hour
+    });
+    
+    // If there are failures in the last hour, we consider n8n offline or degraded
+    res.json({ status: recentFails > 0 ? 'offline' : 'online', recentFails });
+  } catch (error) {
+    res.status(500).json({ status: 'unknown' });
+  }
+});
+
+// Process Queue every 5 minutes
+setInterval(async () => {
+  try {
+    const pendingTasks = await N8nQueue.find({ status: { $in: ['pending', 'failed'] }, retries: { $lt: 10 } }).limit(20);
+    for (const task of pendingTasks) {
+      task.lastAttempt = new Date();
+      task.retries += 1;
+      
+      const webhookUrl = task.payload.event === 'invoice.send_requested' 
+        ? process.env.N8N_INVOICE_WEBHOOK_URL 
+        : process.env.N8N_REMINDER_WEBHOOK_URL;
+        
+      if (!webhookUrl) continue;
+
+      try {
+        const response = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Invoice-Bot-Secret': process.env.N8N_CALLBACK_SECRET || '',
+          },
+          body: JSON.stringify(task.payload),
+        });
+
+        if (response.ok) {
+          task.status = 'completed';
+          task.errorLog = '';
+        } else {
+          task.status = 'failed';
+          task.errorLog = `n8n returned ${response.status}`;
+        }
+      } catch (err) {
+        task.status = 'failed';
+        task.errorLog = err.message;
+      }
+      await task.save();
+    }
+  } catch (err) {
+    console.error('Queue Processor Error:', err.message);
+  }
+}, 5 * 60 * 1000);
+
+// Daily Cron Job at 9:00 AM
+async function runDailyInvoiceCheck() {
+  console.log('Running daily invoice check via Express Cron...');
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Save last run date to file
+    fs.writeFileSync(path.join(__dirname, '.cron-last-run'), new Date().toDateString());
+
+    const sevenDaysFromNow = new Date(today);
+    sevenDaysFromNow.setDate(today.getDate() + 7);
+
+    const invoices = await Invoice.find({
+      status: { $nin: ['paid', 'draft'] },
+      $or: [
+        { dueDate: { $gte: today, $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000) } },
+        { dueDate: { $gte: sevenDaysFromNow, $lt: new Date(sevenDaysFromNow.getTime() + 24 * 60 * 60 * 1000) } }
+      ]
+    }).populate('clientId').populate('userId');
+
+    for (const inv of invoices) {
+      const payload = buildInvoicePayload(inv, inv.userId);
+      await sendOrQueueN8n(
+        process.env.N8N_REMINDER_WEBHOOK_URL,
+        payload,
+        inv._id,
+        inv.userId._id,
+        inv.clientId?._id,
+        'automated_reminder'
+      );
+    }
+  } catch (err) {
+    console.error('Daily cron error:', err);
+  }
+}
+
+cron.schedule('0 9 * * *', runDailyInvoiceCheck);
+
+// Catch-up script on server boot
+setTimeout(() => {
+  const dateStr = new Date().toDateString();
+  let lastRun = '';
+  try { lastRun = fs.readFileSync(path.join(__dirname, '.cron-last-run'), 'utf8'); } catch(e) {}
+  
+  if (lastRun !== dateStr && new Date().getHours() >= 9) {
+    console.log('Missed 9:00 AM cron, running catch-up now...');
+    runDailyInvoiceCheck();
+  }
+}, 5000);
 
 // 404 Route Handler
 app.use((req, res, next) => {

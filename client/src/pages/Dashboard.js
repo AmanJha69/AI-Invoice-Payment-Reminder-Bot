@@ -103,8 +103,9 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [dashboard, setDashboard] = useState({ stats: {}, invoices: [], clients: [], activities: [] });
+  const [dashboard, setDashboard] = useState({ invoices: [], clients: [], activities: [], stats: {} });
   const [loading, setLoading] = useState(true);
+  const [n8nStatus, setN8nStatus] = useState({ status: 'online', recentFails: 0 });
   const [apiMessage, setApiMessage] = useState('');
   const [sendingReminderId, setSendingReminderId] = useState('');
 
@@ -149,6 +150,21 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
 
   useEffect(() => {
     loadDashboard();
+    
+    // Check n8n queue status
+    const checkN8nHealth = async () => {
+      try {
+        const { data } = await api.get('/n8n/status');
+        setN8nStatus(data);
+      } catch (err) {
+        console.error('Could not check n8n health');
+      }
+    };
+    checkN8nHealth();
+    
+    // Periodically check n8n health every 2 minutes
+    const interval = setInterval(checkN8nHealth, 2 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [loadDashboard]);
 
   const invoices = dashboard.invoices?.length ? dashboard.invoices : fallbackInvoices;
@@ -494,6 +510,12 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
             <button className="create-button" onClick={() => setCreateInvoiceOpen(true)}><FiPlus /> New invoice</button>
           </div>
         </header>
+
+        {n8nStatus.status === 'offline' && (
+          <div className="notice" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger-color)', border: '1px solid var(--danger-color)', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold' }}>
+            <span>⚠️</span> n8n automation is currently offline. Reminders are securely queued and will be sent automatically when the system recovers.
+          </div>
+        )}
 
         {apiMessage && <div className="notice">{apiMessage}</div>}
         {loading ? <div className="panel loading-panel">Loading dashboard data...</div> : renderContent()}
