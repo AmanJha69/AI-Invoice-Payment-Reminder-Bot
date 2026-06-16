@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FiActivity,
+  FiAlertCircle,
   FiArrowRight,
   FiBell,
   FiCheckCircle,
@@ -112,7 +113,9 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
   // Modal states
   const [isCreateInvoiceOpen, setCreateInvoiceOpen] = useState(false);
   const [isCreateClientOpen, setCreateClientOpen] = useState(false);
+  const [isFailedTasksOpen, setFailedTasksOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [failedTasks, setFailedTasks] = useState([]);
   
   // Filter states
   const [statusFilter, setStatusFilter] = useState('all');
@@ -156,6 +159,10 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
       try {
         const { data } = await api.get('/n8n/status');
         setN8nStatus(data);
+        
+        // Fetch failed tasks list if there are any recent fails or overall fails
+        const failsRes = await api.get('/n8n/failed');
+        setFailedTasks(failsRes.data);
       } catch (err) {
         console.error('Could not check n8n health');
       }
@@ -505,6 +512,11 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
             <button className="icon-control" onClick={toggleTheme} aria-label="Toggle theme">
               {theme === 'light' ? <FiMoon /> : <FiSun />}
             </button>
+            {failedTasks.length > 0 && (
+              <button className="create-button outline-action" onClick={() => setFailedTasksOpen(true)} style={{ borderColor: 'var(--danger-color)', color: 'var(--danger-color)' }}>
+                <FiAlertCircle /> Failed Deliveries ({failedTasks.length})
+              </button>
+            )}
             <button className="icon-control" onClick={loadDashboard} aria-label="Refresh dashboard"><FiRefreshCw /></button>
             <button className="create-button outline-action" onClick={() => setCreateClientOpen(true)}><FiUsers /> Add Client</button>
             <button className="create-button" onClick={() => setCreateInvoiceOpen(true)}><FiPlus /> New invoice</button>
@@ -538,6 +550,12 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
         invoice={selectedInvoice} 
         onUpdated={loadDashboard} 
         onDeleted={loadDashboard} 
+      />
+      <FailedTasksModal 
+        isOpen={isFailedTasksOpen} 
+        onClose={() => setFailedTasksOpen(false)} 
+        tasks={failedTasks}
+        onRefresh={loadDashboard}
       />
     </div>
   );
@@ -639,6 +657,68 @@ function TimelineItem({ invoice, onSend, sending }) {
       <button className="small-button" onClick={() => onSend(invoice)} disabled={sending}>
         <FiSend /> {sending ? 'Sending' : 'Send'}
       </button>
+    </div>
+  );
+}
+
+function FailedTasksModal({ isOpen, onClose, tasks, onRefresh }) {
+  if (!isOpen) return null;
+
+  const dismissTask = async (id) => {
+    try {
+      await api.delete(`/n8n/failed/${id}`);
+      onRefresh();
+      if (tasks.length === 1) onClose(); // close if last one dismissed
+    } catch (err) {
+      console.error('Failed to dismiss task');
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content wide-modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>Failed Automated Reminders</h2>
+          <button className="icon-control" onClick={onClose}>&times;</button>
+        </div>
+        <div className="modal-body">
+          {tasks.length === 0 ? (
+            <p>No failed deliveries! 🎉</p>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Client</th>
+                    <th>Email</th>
+                    <th>Error</th>
+                    <th>Retries</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tasks.map(task => (
+                    <tr key={task._id}>
+                      <td>{new Date(task.createdAt).toLocaleString()}</td>
+                      <td>{task.clientId?.name || 'Unknown'}</td>
+                      <td>{task.clientId?.email || 'N/A'}</td>
+                      <td style={{ color: 'var(--danger-color)' }}>{task.errorLog}</td>
+                      <td>{task.retries} / 10</td>
+                      <td>
+                        <button className="small-button outline-action" onClick={() => dismissTask(task._id)}>Dismiss</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="secondary-button" onClick={onClose}>Close</button>
+        </div>
+      </div>
     </div>
   );
 }

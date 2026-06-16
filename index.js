@@ -566,6 +566,30 @@ app.get('/api/n8n/status', auth, async (req, res) => {
   }
 });
 
+app.get('/api/n8n/failed', auth, async (req, res) => {
+  try {
+    const failedTasks = await N8nQueue.find({
+      userId: req.userId,
+      $or: [
+        { status: 'failed', retries: { $gte: 10 } },
+        { status: 'failed' } // Just return all failed/pending ones to be safe, but sort by retries
+      ]
+    }).populate('clientId', 'name company email').sort('-createdAt');
+    res.json(failedTasks);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching failed tasks' });
+  }
+});
+
+app.delete('/api/n8n/failed/:id', auth, async (req, res) => {
+  try {
+    await N8nQueue.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+    res.json({ message: 'Task removed' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting failed task' });
+  }
+});
+
 // Process Queue every 5 minutes
 setInterval(async () => {
   try {
@@ -621,16 +645,31 @@ async function runDailyInvoiceCheck() {
     const sevenDaysFromNow = new Date(today);
     sevenDaysFromNow.setDate(today.getDate() + 7);
 
+    const threeDaysAgo = new Date(today);
+    threeDaysAgo.setDate(today.getDate() - 3);
+
+    const sevenDaysAgo = new Date(today);
+    sevenDaysAgo.setDate(today.getDate() - 7);
+
     const invoices = await Invoice.find({
       status: { $nin: ['paid', 'draft'] },
       $or: [
         { dueDate: { $gte: today, $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000) } },
-        { dueDate: { $gte: sevenDaysFromNow, $lt: new Date(sevenDaysFromNow.getTime() + 24 * 60 * 60 * 1000) } }
+        { dueDate: { $gte: sevenDaysFromNow, $lt: new Date(sevenDaysFromNow.getTime() + 24 * 60 * 60 * 1000) } },
+        { dueDate: { $gte: threeDaysAgo, $lt: new Date(threeDaysAgo.getTime() + 24 * 60 * 60 * 1000) } },
+        { dueDate: { $gte: sevenDaysAgo, $lt: new Date(sevenDaysAgo.getTime() + 24 * 60 * 60 * 1000) } }
       ]
     }).populate('clientId').populate('userId');
 
     for (const inv of invoices) {
       const payload = buildInvoicePayload(inv, inv.userId);
+      
+      // Determine reminder type based on due date
+      const invDueDate = new Date(inv.dueDate).setHours(0,0,0,0);
+      if (invDueDate === sevenDaysFromNow.getTime()) payload.reminderType = 'upcoming';
+      else if (invDueDate === today.getTime()) payload.reminderType = 'due_today';
+      else payload.reminderType = 'overdue';
+
       await sendOrQueueN8n(
         process.env.N8N_REMINDER_WEBHOOK_URL,
         payload,
@@ -639,13 +678,16 @@ async function runDailyInvoiceCheck() {
         inv.clientId?._id,
         'automated_reminder'
       );
+      
+      // Rate limiting: sleep for 2 seconds to avoid SMTP spam filters
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   } catch (err) {
     console.error('Daily cron error:', err);
   }
 }
 
-cron.schedule('0 9 * * *', runDailyInvoiceCheck);
+cron.schedule('0 9 * * *', runDailyInvoiceCheck, { timezone: 'Asia/Kolkata' });
 
 // Catch-up script on server boot
 setTimeout(() => {
