@@ -320,6 +320,14 @@ app.post('/api/n8n/reminders/:invoiceId/send', n8nLimiter, auth, async (req, res
 
     const payload = buildInvoicePayload(invoice, user);
     
+    // Determine reminder type so the n8n Switch node knows which path to take
+    const today = new Date().setHours(0,0,0,0);
+    const invDueDate = new Date(invoice.dueDate).setHours(0,0,0,0);
+    
+    if (invDueDate > today) payload.reminderType = 'upcoming';
+    else if (invDueDate === today) payload.reminderType = 'due_today';
+    else payload.reminderType = 'overdue';
+    
     const result = await sendOrQueueN8n(
       process.env.N8N_REMINDER_WEBHOOK_URL,
       payload,
