@@ -1,4 +1,5 @@
 const express = require('express');
+const PDFDocument = require('pdfkit');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -83,6 +84,7 @@ const buildInvoicePayload = (invoice, user) => ({
       }
     : null,
   notificationPreference: invoice.clientId?.notificationPreference || 'email',
+  downloadLink: `http://localhost:5000/api/invoices/${invoice._id}/download`,
   user: {
     id: user._id,
     name: user.name,
@@ -387,6 +389,97 @@ app.get('/api/invoices/:id', auth, async (req, res) => {
   }
 });
 
+// --- Download PDF Invoice ---
+// This route does not require authentication so the client can download it directly from their email link
+app.get('/api/invoices/:id/download', async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id).populate('clientId', 'name email company phone');
+    if (!invoice) return res.status(404).send('Invoice not found');
+
+    const user = await User.findById(invoice.userId);
+    if (!user) return res.status(404).send('User not found');
+
+    const doc = new PDFDocument({ margin: 50 });
+    
+    // Set headers to trigger file download in browser
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Invoice_${invoice.invoiceNumber}.pdf"`);
+    
+    doc.pipe(res);
+
+    // Header
+    doc.fillColor('#444444').fontSize(20).text('INVOICE', 50, 50);
+    doc.fontSize(10)
+       .text(user.company || user.name, 200, 50, { align: 'right' })
+       .text(user.email, 200, 65, { align: 'right' })
+       .text(user.phone || '', 200, 80, { align: 'right' })
+       .moveDown();
+
+    // Invoice Details
+    const customerInfoTop = 130;
+    doc.fillColor('#000000').fontSize(12).text('Bill To:', 50, customerInfoTop);
+    
+    if (invoice.clientId) {
+      doc.fontSize(10)
+         .text(invoice.clientId.name, 50, customerInfoTop + 15)
+         .text(invoice.clientId.email, 50, customerInfoTop + 30)
+         .text(invoice.clientId.company || '', 50, customerInfoTop + 45);
+    } else {
+      doc.fontSize(10).text('Unknown Client', 50, customerInfoTop + 15);
+    }
+
+    doc.fontSize(10)
+       .text('Invoice Number:', 300, customerInfoTop)
+       .font('Helvetica-Bold')
+       .text(invoice.invoiceNumber, 400, customerInfoTop)
+       .font('Helvetica')
+       .text('Invoice Date:', 300, customerInfoTop + 15)
+       .text(new Date(invoice.createdAt).toLocaleDateString(), 400, customerInfoTop + 15)
+       .text('Due Date:', 300, customerInfoTop + 30)
+       .font('Helvetica-Bold')
+       .text(new Date(invoice.dueDate).toLocaleDateString(), 400, customerInfoTop + 30)
+       .font('Helvetica');
+
+    // Table Header
+    const invoiceTableTop = 220;
+    doc.font('Helvetica-Bold');
+    doc.fontSize(10)
+       .text('Item', 50, invoiceTableTop)
+       .text('Description', 100, invoiceTableTop)
+       .text('Total', 0, invoiceTableTop, { align: 'right' });
+    
+    doc.strokeColor('#aaaaaa').lineWidth(1).moveTo(50, invoiceTableTop + 15).lineTo(550, invoiceTableTop + 15).stroke();
+    doc.font('Helvetica');
+
+    // Item Row
+    doc.fontSize(10)
+       .text('1', 50, invoiceTableTop + 25)
+       .text(invoice.description || 'Professional Services', 100, invoiceTableTop + 25)
+       .text(`${invoice.currency === 'USD' ? '$' : invoice.currency + ' '}${invoice.amount.toLocaleString()}`, 0, invoiceTableTop + 25, { align: 'right' });
+    
+    doc.strokeColor('#aaaaaa').lineWidth(1).moveTo(50, invoiceTableTop + 40).lineTo(550, invoiceTableTop + 40).stroke();
+
+    // Total
+    const subtotalPosition = invoiceTableTop + 60;
+    doc.font('Helvetica-Bold');
+    doc.text('Total Due', 300, subtotalPosition)
+       .text(`${invoice.currency === 'USD' ? '$' : invoice.currency + ' '}${invoice.amount.toLocaleString()}`, 0, subtotalPosition, { align: 'right' });
+    doc.font('Helvetica');
+
+    // Footer Notes
+    if (invoice.notes) {
+      doc.fontSize(10).text('Notes:', 50, subtotalPosition + 40).text(invoice.notes, 50, subtotalPosition + 55, { width: 500 });
+    }
+    
+    doc.fontSize(10).text('Thank you for your business!', 50, 700, { align: 'center', width: 500 });
+
+    doc.end();
+  } catch (error) {
+    console.error('PDF Generation error:', error);
+    if (!res.headersSent) res.status(500).send('Error generating PDF');
+  }
+});
+
 // --- Update Invoice ---
 app.put('/api/invoices/:id', auth, async (req, res) => {
   try {
@@ -559,8 +652,31 @@ app.get('/api/n8n/status', auth, async (req, res) => {
       lastAttempt: { $gte: new Date(Date.now() - 60 * 60 * 1000) } // Last hour
     });
     
-    // If there are failures in the last hour, we consider n8n offline or degraded
-    res.json({ status: recentFails > 0 ? 'offline' : 'online', recentFails });
+    // Actively ping n8n to see if it is running
+    let isN8nOnline = false;
+    if (process.env.N8N_REMINDER_WEBHOOK_URL) {
+      try {
+        const url = new URL(process.env.N8N_REMINDER_WEBHOOK_URL);
+        const baseUrl = `${url.protocol}//${url.host}/healthz`;
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+        
+        const response = await fetch(baseUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        
+        if (response.ok) isN8nOnline = true;
+      } catch (e) {
+        isN8nOnline = false;
+      }
+    }
+    
+    // It's offline if the ping failed, OR if there are recent database failures
+    if (!isN8nOnline || recentFails > 0) {
+      res.json({ status: 'offline', recentFails });
+    } else {
+      res.json({ status: 'online', recentFails });
+    }
   } catch (error) {
     res.status(500).json({ status: 'unknown' });
   }

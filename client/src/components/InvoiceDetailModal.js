@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FiX, FiSave, FiSend, FiTrash2, FiMail } from 'react-icons/fi';
+import { FiX, FiSave, FiSend, FiTrash2, FiMail, FiDownload } from 'react-icons/fi';
 import api from '../services/api';
 import '../styles/Modals.css';
 
@@ -88,6 +88,10 @@ const InvoiceDetailModal = ({ isOpen, onClose, invoice, onUpdated, onDeleted }) 
     } finally {
       setActionLoading(null);
     }
+  };
+
+  const handleDownloadPdf = () => {
+    window.open(`http://localhost:5000/api/invoices/${invoice._id}/download`, '_blank');
   };
 
   return (
@@ -181,6 +185,9 @@ const InvoiceDetailModal = ({ isOpen, onClose, invoice, onUpdated, onDeleted }) 
             </button>
           </div>
           <div style={{ display: 'flex', gap: '10px' }}>
+            <button className="modal-btn modal-btn-cancel" onClick={handleDownloadPdf} disabled={actionLoading !== null}>
+              <FiDownload /> Download PDF
+            </button>
             <button className="modal-btn modal-btn-cancel" onClick={handleSendInvoice} disabled={actionLoading !== null}>
               <FiMail /> {actionLoading === 'invoice' ? 'Sending...' : 'Send Invoice'}
             </button>
