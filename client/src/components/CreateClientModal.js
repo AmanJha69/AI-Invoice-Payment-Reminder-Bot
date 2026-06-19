@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FiX, FiUser, FiMail, FiPhone, FiMapPin } from 'react-icons/fi';
+import { FiX, FiUser, FiMapPin } from 'react-icons/fi';
 import api from '../services/api';
 import '../styles/Modals.css';
 

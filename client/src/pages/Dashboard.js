@@ -27,7 +27,7 @@ import {
 } from 'react-icons/fi';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
-  LineChart, Line, PieChart, Pie, Cell, Legend
+  PieChart, Pie, Cell
 } from 'recharts';
 import api from '../services/api';
 import CreateInvoiceModal from '../components/CreateInvoiceModal';
@@ -46,7 +46,7 @@ const tabs = [
   { id: 'settings', label: 'Settings', icon: FiSettings },
 ];
 
-const COLORS = ['#10b981', '#f59e0b', '#6366f1', '#ef4444', '#64748b'];
+
 
 const fallbackInvoices = [
   {
@@ -149,7 +149,7 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
     } finally {
       setLoading(false);
     }
-  }, [user.email, user.id]);
+  }, []);
 
   useEffect(() => {
     loadDashboard();
@@ -189,7 +189,7 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
   }, [invoices, searchTerm, statusFilter]);
 
   const overdueInvoices = invoices.filter((invoice) => invoice.status === 'overdue' || new Date(invoice.dueDate) < new Date());
-  const paidInvoices = invoices.filter((invoice) => invoice.status === 'paid');
+
 
   const sendReminder = async (invoice) => {
     if (invoice._id?.startsWith('demo-')) {

@@ -4,7 +4,7 @@ import api from '../services/api';
 import '../styles/Modals.css';
 
 const InvoiceDetailModal = ({ isOpen, onClose, invoice, onUpdated, onDeleted }) => {
-  const [loading, setLoading] = useState(false);
+
   const [actionLoading, setActionLoading] = useState(null); // 'save', 'reminder', 'invoice', 'delete'
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
