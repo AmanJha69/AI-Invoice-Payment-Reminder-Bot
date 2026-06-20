@@ -84,7 +84,7 @@ const buildInvoicePayload = (invoice, user) => ({
       }
     : null,
   notificationPreference: invoice.clientId?.notificationPreference || 'email',
-  downloadLink: `http://localhost:5000/api/invoices/${invoice._id}/download`,
+  downloadLink: `https://ai-invoice-payment-reminder-bot-invoice.onrender.com/api/invoices/${invoice._id}/download`,
   user: {
     id: user._id,
     name: user.name,
