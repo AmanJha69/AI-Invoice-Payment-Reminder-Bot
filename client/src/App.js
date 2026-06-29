@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
+import Landing from './pages/Landing';
 import ErrorBoundary from './components/ErrorBoundary';
 import './App.css';
 
@@ -46,8 +47,10 @@ function App() {
     <ErrorBoundary>
       <Router>
         <Routes>
-          <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login onLogin={setUser} />} />
-          <Route path="/*" element={user ? <Dashboard user={user} onLogout={logout} theme={theme} toggleTheme={toggleTheme} /> : <Navigate to="/login" replace />} />
+          <Route path="/" element={user ? <Navigate to="/dashboard" replace /> : <Landing theme={theme} toggleTheme={toggleTheme} />} />
+          <Route path="/login" element={user ? <Navigate to="/dashboard" replace /> : <Login onLogin={setUser} />} />
+          <Route path="/dashboard/*" element={user ? <Dashboard user={user} onLogout={logout} theme={theme} toggleTheme={toggleTheme} /> : <Navigate to="/login" replace />} />
+          <Route path="*" element={<Navigate to={user ? "/dashboard" : "/"} replace />} />
         </Routes>
       </Router>
     </ErrorBoundary>

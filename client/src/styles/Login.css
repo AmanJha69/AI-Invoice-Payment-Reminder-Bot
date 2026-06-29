@@ -1,3 +1,29 @@
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeSlideLeft {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes bgPan {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes textGlow {
+  0%, 100% { text-shadow: 0 0 20px rgba(255, 255, 255, 0.1); }
+  50% { text-shadow: 0 0 30px rgba(255, 255, 255, 0.4); }
+}
+
 .login-page {
   min-height: 100vh;
   display: grid;
@@ -12,10 +38,10 @@
   display: grid;
   align-content: space-between;
   background:
-    linear-gradient(135deg, rgba(16, 24, 32, 0.88), rgba(16, 24, 32, 0.58)),
+    linear-gradient(135deg, rgba(16, 24, 32, 0.92), rgba(16, 24, 32, 0.4)),
     url("https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=1600&q=80");
-  background-size: cover;
-  background-position: center;
+  background-size: 150% 150%;
+  animation: bgPan 30s ease-in-out infinite;
 }
 
 .brand-lockup {
@@ -35,6 +61,14 @@
   font-size: clamp(38px, 6vw, 72px);
   line-height: 1;
   letter-spacing: 0;
+  opacity: 0;
+  animation: fadeSlideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards, textGlow 4s ease-in-out infinite 0.8s;
+  background: linear-gradient(to right, #ffffff 20%, #a5b4fc 50%, #ffffff 80%);
+  background-size: 200% auto;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: fadeSlideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards, bgPan 6s linear infinite;
 }
 
 .showcase-copy p {
@@ -43,6 +77,8 @@
   color: #d9e2ec;
   font-size: 18px;
   line-height: 1.6;
+  opacity: 0;
+  animation: fadeSlideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards;
 }
 
 .showcase-grid {
@@ -58,7 +94,13 @@
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(12px);
+  opacity: 0;
+  animation: popIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+.showcase-grid div:nth-child(1) { animation-delay: 0.3s; }
+.showcase-grid div:nth-child(2) { animation-delay: 0.45s; }
+.showcase-grid div:nth-child(3) { animation-delay: 0.6s; }
 
 .showcase-grid span {
   display: block;
@@ -87,6 +129,8 @@
   border-radius: 8px;
   background: var(--bg-surface);
   box-shadow: 0 18px 44px rgba(23, 32, 42, 0.16);
+  opacity: 0;
+  animation: fadeSlideLeft 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
 }
 
 .auth-tabs {

@@ -33,6 +33,7 @@ import api from '../services/api';
 import CreateInvoiceModal from '../components/CreateInvoiceModal';
 import CreateClientModal from '../components/CreateClientModal';
 import InvoiceDetailModal from '../components/InvoiceDetailModal';
+import ClientDetailModal from '../components/ClientDetailModal';
 import '../styles/Dashboard.css';
 
 const tabs = [
@@ -84,13 +85,13 @@ const fallbackClients = [
   { _id: 'client-3', name: 'Neha Rao', company: 'Nexus Retail', email: 'neha@nexus.example' },
 ];
 
-const apiEndpoints = [
-  { label: 'Register user', path: '/auth/register' },
-  { label: 'Login user', path: '/auth/login' },
-  { label: 'Dashboard data', path: '/dashboard' },
-  { label: 'Create client', path: '/clients' },
-  { label: 'Create invoice', path: '/invoices' },
-  { label: 'Send reminder', path: '/n8n/reminders/:id/send' },
+const aiCapabilities = [
+  { label: 'Smart Email Reminders', desc: 'Automatically dispatches styled emails to clients with overdue balances.' },
+  { label: 'Dynamic PDFs', desc: 'Attaches instantly generated PDF invoices to outbound email reminders.' },
+  { label: 'Invoice Processing', desc: 'Analyzes MongoDB data to calculate exact collection rates and outstanding dues.' },
+  { label: 'Automated Dunning', desc: 'Executes scheduled n8n workflows based on due date timelines without manual input.' },
+  { label: 'Status Sync', desc: 'Automatically updates dashboard UI when a payment is marked as received.' },
+  { label: 'Client Analytics', desc: 'Builds financial profiles for each client based on their payment history.' },
 ];
 
 const formatCurrency = (amount, currency = 'INR') =>
@@ -113,8 +114,9 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
   // Modal states
   const [isCreateInvoiceOpen, setCreateInvoiceOpen] = useState(false);
   const [isCreateClientOpen, setCreateClientOpen] = useState(false);
-  const [isFailedTasksOpen, setFailedTasksOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [isFailedTasksOpen, setFailedTasksOpen] = useState(false);
   const [failedTasks, setFailedTasks] = useState([]);
   
   // Filter states
@@ -226,15 +228,53 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
     }
   };
 
+  const downloadCSV = () => {
+    const headers = ['Invoice Number', 'Client', 'Amount', 'Due Date', 'Status'];
+    const rows = invoices.map(inv => [
+      inv.invoiceNumber,
+      inv.clientId?.company || inv.clientId?.name || 'Unknown',
+      inv.amount,
+      new Date(inv.dueDate).toLocaleDateString(),
+      inv.status
+    ]);
+    
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(r => r.join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'payments_export.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const renderContent = () => {
     if (activeTab === 'overview') {
       return (
         <>
           <section className="metric-grid">
-            <MetricCard icon={FiDollarSign} label="Total receivables" value={formatCurrency(stats.totalAmount)} note={`${stats.invoiceCount || 0} invoices tracked`} tone="green" />
-            <MetricCard icon={FiCheckCircle} label="Paid amount" value={formatCurrency(stats.paidAmount)} note={`${stats.collectionRate || 0}% collection rate`} tone="blue" />
-            <MetricCard icon={FiClock} label="Overdue" value={formatCurrency(stats.overdueAmount)} note={`${stats.overdueCount || 0} invoices need action`} tone="red" />
-            <MetricCard icon={FiUsers} label="Clients" value={stats.clientCount || clients.length} note="Active clients" tone="yellow" />
+            <MetricCard 
+              icon={FiDollarSign} label="Total receivables" value={formatCurrency(stats.totalAmount)} note={`${stats.invoiceCount || 0} invoices tracked`} tone="green" 
+              trend="+12%" trendDirection="up" onClick={() => setActiveTab('invoices')} 
+            />
+            <MetricCard 
+              icon={FiCheckCircle} label="Paid amount" value={formatCurrency(stats.paidAmount)} note={`${stats.collectionRate || 0}% collection rate`} tone="blue" 
+              trend="+5%" trendDirection="up" onClick={() => { setActiveTab('invoices'); setStatusFilter('paid'); }} 
+            />
+            <MetricCard 
+              icon={FiClock} label="Overdue" value={formatCurrency(stats.overdueAmount)} note={`${stats.overdueCount || 0} invoices need action`} tone="red" 
+              trend="Action req" trendDirection="down" onClick={() => setActiveTab('reminders')} 
+            />
+            <MetricCard 
+              icon={FiUsers} label="Clients" value={stats.clientCount || clients.length} note="Active clients" tone="yellow" 
+              trend="+2" trendDirection="up" onClick={() => setActiveTab('clients')} 
+            />
           </section>
 
           <section className="dashboard-grid" style={{ marginTop: '24px' }}>
@@ -247,14 +287,28 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
                     { name: 'Pending', amount: (stats.totalAmount || 0) - (stats.paidAmount || 0) - (stats.overdueAmount || 0) },
                     { name: 'Overdue', amount: stats.overdueAmount || 0 }
                   ]}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" />
-                    <YAxis tickFormatter={(val) => `₹${val/1000}k`} />
-                    <RechartsTooltip formatter={(val) => formatCurrency(val)} />
-                    <Bar dataKey="amount" radius={[4, 4, 0, 0]}>
-                      <Cell fill="#10b981" />
-                      <Cell fill="#f59e0b" />
-                      <Cell fill="#ef4444" />
+                    <defs>
+                      <linearGradient id="colorPaid" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.9}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0.2}/>
+                      </linearGradient>
+                      <linearGradient id="colorPending" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.9}/>
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.2}/>
+                      </linearGradient>
+                      <linearGradient id="colorOverdue" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.9}/>
+                        <stop offset="95%" stopColor="#ef4444" stopOpacity={0.2}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(100,116,139,0.2)" />
+                    <XAxis dataKey="name" stroke="var(--text-secondary)" />
+                    <YAxis tickFormatter={(val) => `₹${val/1000}k`} stroke="var(--text-secondary)" />
+                    <RechartsTooltip formatter={(val) => formatCurrency(val)} contentStyle={{ backgroundColor: 'var(--bg-surface)', border: 'none', borderRadius: '12px', boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }} />
+                    <Bar dataKey="amount" radius={[8, 8, 0, 0]}>
+                      <Cell fill="url(#colorPaid)" />
+                      <Cell fill="url(#colorPending)" />
+                      <Cell fill="url(#colorOverdue)" />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -288,23 +342,29 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
                 {!overdueInvoices.length && <p className="empty-state">No overdue invoices. The reminder queue is clear.</p>}
               </div>
             </div>
-            <div className="panel">
+            <div className="panel" style={{ cursor: 'pointer', transition: 'var(--transition)' }} onClick={() => setActiveTab('payments')} onMouseOver={(e) => e.currentTarget.style.transform = 'translateY(-4px)'} onMouseOut={(e) => e.currentTarget.style.transform = 'none'}>
               <PanelTitle icon={FiTrendingUp} title="Collection Rate" action="Analytics" />
-              <div className="score-ring" style={{ marginBottom: '20px' }}>
-                <span>{stats.collectionRate || 0}%</span>
-                <small>collected</small>
-              </div>
-              <div style={{ width: '100%', height: 200 }}>
-                <ResponsiveContainer>
+              <div style={{ width: '100%', height: 260, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none' }}>
+                  <span style={{ fontSize: '32px', fontWeight: 900, color: 'var(--text-primary)', display: 'block' }}>{stats.collectionRate || 0}%</span>
+                  <small style={{ color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, textTransform: 'uppercase' }}>Collected</small>
+                </div>
+                <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
+                    <defs>
+                      <linearGradient id="colorPie" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#4f46e5" stopOpacity={1}/>
+                        <stop offset="95%" stopColor="#9333ea" stopOpacity={0.8}/>
+                      </linearGradient>
+                    </defs>
                     <Pie data={[
                       { name: 'Collected', value: stats.paidAmount || 1 },
                       { name: 'Outstanding', value: (stats.totalAmount || 0) - (stats.paidAmount || 0) || 1 }
-                    ]} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                      <Cell fill="#10b981" />
-                      <Cell fill="#e2e8f0" />
+                    ]} cx="50%" cy="50%" innerRadius={80} outerRadius={110} paddingAngle={5} dataKey="value" stroke="none">
+                      <Cell fill="url(#colorPie)" style={{ filter: 'drop-shadow(0px 10px 15px rgba(79, 70, 229, 0.3))' }} />
+                      <Cell fill="rgba(100, 116, 139, 0.1)" />
                     </Pie>
-                    <RechartsTooltip formatter={(val) => formatCurrency(val)} />
+                    <RechartsTooltip formatter={(val) => formatCurrency(val)} contentStyle={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '12px', color: 'var(--text-primary)' }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -352,14 +412,14 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
                 <p style={{ margin: 0, fontSize: '15px' }}>No clients found. Click "Add Client" to get started.</p>
               </div>
             ) : clients.map((client) => (
-              <div className="client-card" key={client._id}>
-                <div className="avatar">{(client.company || client.name || 'C').charAt(0)}</div>
+              <div className="client-card clickable" key={client._id} onClick={() => setSelectedClient(client)}>
+                <div className="avatar">{(client.company || client.name || 'C').charAt(0).toUpperCase()}</div>
                 <strong>{client.company || client.name}</strong>
                 <span>{client.name}</span>
                 <p>{client.email}</p>
                 <button 
-                  onClick={() => deleteClient(client._id)} 
-                  style={{ position: 'absolute', top: '12px', right: '12px', background: 'transparent', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', padding: '4px' }}
+                  onClick={(e) => { e.stopPropagation(); deleteClient(client._id); }} 
+                  style={{ position: 'absolute', top: '12px', right: '12px', background: 'var(--bg-glass)', border: '1px solid var(--glass-border)', borderRadius: '50%', color: 'var(--danger-color)', cursor: 'pointer', padding: '8px', zIndex: 2 }}
                   title="Delete Client"
                 >
                   <FiTrash2 />
@@ -378,13 +438,21 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
           <div className="reminder-list">
             {invoices.map((invoice, index) => (
               <div className="reminder-row" key={invoice._id}>
-                <span className={`status-dot ${invoice.status}`} />
-                <div>
-                  <strong>{invoice.invoiceNumber}</strong>
-                  <p>{invoice.clientId?.company || invoice.clientId?.name || 'Client'} gets {index % 2 ? 'a WhatsApp reminder' : 'an email reminder'} on the next n8n run.</p>
+                <div style={{ position: 'relative', width: '10px', height: '10px' }}>
+                  <span className={`status-dot ${invoice.status}`} style={{ position: 'absolute', top: 0, left: 0 }} />
+                  {invoice.status !== 'paid' && <span className={`status-dot ${invoice.status}`} style={{ position: 'absolute', top: 0, left: 0, animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />}
                 </div>
-                <button onClick={() => sendReminder(invoice)} disabled={sendingReminderId === invoice._id}>
-                  {sendingReminderId === invoice._id ? 'Sending' : 'Send'}
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                    <strong style={{ fontSize: '15px' }}>{invoice.invoiceNumber}</strong>
+                    <span className="bot-badge email">
+                      EMAIL
+                    </span>
+                  </div>
+                  <p>AI will send an automated reminder to {invoice.clientId?.company || invoice.clientId?.name || 'Client'} on the next n8n run.</p>
+                </div>
+                <button className="create-button outline-action" onClick={() => sendReminder(invoice)} disabled={sendingReminderId === invoice._id} style={{ height: '36px', padding: '0 16px', background: 'transparent' }}>
+                  {sendingReminderId === invoice._id ? 'Sending...' : 'Send now'}
                 </button>
               </div>
             ))}
@@ -417,32 +485,44 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
       return (
         <section className="dashboard-grid">
           <div className="panel wide-panel">
-            <PanelTitle icon={FiMessageSquare} title="API endpoint map" action="Express + n8n" />
+            <PanelTitle icon={FiMessageSquare} title="AI Capabilities Map" action="Express + n8n" />
             <div className="workflow">
-              {['React request', 'Express API', 'MongoDB', 'AI message', 'Respond'].map((step, index) => (
-                <div className="workflow-step" key={step}>
-                  <span>{index + 1}</span>
-                  <strong>{step}</strong>
-                </div>
+              {['Invoice scan', 'Data analysis', 'Channel routing', 'AI Generation', 'Dispatch'].map((step, index, arr) => (
+                <React.Fragment key={step}>
+                  <div className="workflow-step">
+                    <span style={{ fontSize: '11px', color: 'var(--primary-color)', fontWeight: 'bold', marginBottom: '8px', textTransform: 'uppercase' }}>Phase {index + 1}</span>
+                    <strong style={{ fontSize: '15px' }}>{step}</strong>
+                  </div>
+                  {index < arr.length - 1 && <FiArrowRight className="workflow-arrow" />}
+                </React.Fragment>
               ))}
             </div>
             <div className="endpoint-list">
-              {apiEndpoints.map((endpoint) => (
-                <div key={endpoint.path}>
-                  <strong>{endpoint.label}</strong>
-                  <code>{endpoint.path}</code>
+              {aiCapabilities.map((cap) => (
+                <div key={cap.label}>
+                  <strong>{cap.label}</strong>
+                  <code style={{ background: 'transparent', padding: 0, color: 'var(--text-secondary)', fontSize: '13px' }}>{cap.desc}</code>
                 </div>
               ))}
             </div>
           </div>
           <div className="panel">
             <PanelTitle icon={FiSettings} title="Automation controls" action="Local n8n" />
-            <label className="toggle-row"><input type="checkbox" defaultChecked /> Webhook workflows active</label>
-            <label className="toggle-row"><input type="checkbox" defaultChecked /> MongoDB Atlas credential saved</label>
-            <label className="toggle-row"><input type="checkbox" /> Email or WhatsApp credential connected</label>
+            <label className="toggle-row">
+              <span style={{ fontWeight: 600 }}>Webhook workflows active</span>
+              <div className="custom-toggle active"></div>
+            </label>
+            <label className="toggle-row">
+              <span style={{ fontWeight: 600 }}>MongoDB Atlas credential saved</span>
+              <div className="custom-toggle active"></div>
+            </label>
+            <label className="toggle-row">
+              <span style={{ fontWeight: 600 }}>Gmail API credential connected</span>
+              <div className="custom-toggle"></div>
+            </label>
             <div className="webhook-base">
               <span>API base</span>
-              <code>{process.env.REACT_APP_API_BASE || 'http://localhost:5000/api'}</code>
+              <code style={{ background: 'transparent', padding: 0, color: 'var(--text-secondary)' }}>{process.env.REACT_APP_API_BASE || 'http://localhost:5000/api'}</code>
             </div>
           </div>
         </section>
@@ -450,9 +530,36 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
     }
 
     if (activeTab === 'payments') {
+      const chartData = [
+        { name: 'Week 1', revenue: (stats.paidAmount || 5000) * 0.2 },
+        { name: 'Week 2', revenue: (stats.paidAmount || 5000) * 0.4 },
+        { name: 'Week 3', revenue: (stats.paidAmount || 5000) * 0.65 },
+        { name: 'Week 4', revenue: stats.paidAmount || 5000 }
+      ];
       return (
         <section className="panel">
-          <PanelTitle icon={FiCreditCard} title="Payment tracking" action={formatCurrency(stats.paidAmount)} />
+          <div className="table-toolbar">
+            <PanelTitle icon={FiCreditCard} title="Payment tracking" action={formatCurrency(stats.paidAmount)} />
+            <button className="create-button outline-action" onClick={downloadCSV} style={{ background: 'transparent' }}>Download CSV</button>
+          </div>
+          
+          <div style={{ height: '200px', width: '100%', marginBottom: '24px', marginTop: '16px' }}>
+            <ResponsiveContainer>
+              <BarChart data={chartData}>
+                <defs>
+                  <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <RechartsTooltip formatter={(val) => formatCurrency(val)} contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }} />
+                <Bar dataKey="revenue" fill="url(#colorRevenue)" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
           <div className="payment-strip">
             <div><span>Received</span><strong>{formatCurrency(stats.paidAmount)}</strong></div>
             <div><span>Outstanding</span><strong>{formatCurrency((stats.totalAmount || 0) - (stats.paidAmount || 0))}</strong></div>
@@ -464,14 +571,35 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
     }
 
     return (
-      <section className="panel">
+      <section className="panel" style={{ maxWidth: '800px' }}>
         <PanelTitle icon={FiSettings} title="Workspace settings" action="MongoDB Atlas" />
-        <div className="settings-grid">
-          <div><span>Signed in as</span><strong>{user.email}</strong></div>
-          <div><span>Company</span><strong>{user.company || 'Not set'}</strong></div>
-          <div><span>Timezone</span><strong>{user.timezone || 'UTC'}</strong></div>
-          <div><span>Backend mode</span><strong>Express server</strong></div>
-          <div><span>API base</span><strong>{process.env.REACT_APP_API_BASE || 'http://localhost:5000/api'}</strong></div>
+        <div className="settings-grid" style={{ gridTemplateColumns: '1fr', gap: '24px', marginTop: '16px' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px' }}>Signed in as (Read only)</label>
+            <input type="text" className="settings-input" value={user.email} disabled style={{ opacity: 0.7 }} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px' }}>Company Name</label>
+              <input type="text" className="settings-input" defaultValue={user.company || 'Not set'} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px' }}>Timezone</label>
+              <select className="settings-input">
+                <option>UTC</option>
+                <option>America/New_York</option>
+                <option>Asia/Kolkata</option>
+                <option>Europe/London</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px' }}>API Base URL</label>
+            <input type="text" className="settings-input" defaultValue={process.env.REACT_APP_API_BASE || 'http://localhost:5000/api'} />
+          </div>
+          <div style={{ marginTop: '12px' }}>
+            <button className="create-button" style={{ width: '100%', justifyContent: 'center' }}>Save Preferences</button>
+          </div>
         </div>
       </section>
     );
@@ -479,6 +607,11 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
 
   return (
     <div className="app-shell">
+      <div className="aurora-bg">
+        <div className="aurora-orb aurora-orb-1" />
+        <div className="aurora-orb aurora-orb-2" />
+        <div className="aurora-orb aurora-orb-3" />
+      </div>
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
         <div className="sidebar-brand">
           <div className="brand-mark"><FiCreditCard /></div>
@@ -551,6 +684,12 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
         onUpdated={loadDashboard} 
         onDeleted={loadDashboard} 
       />
+      <ClientDetailModal
+        isOpen={!!selectedClient}
+        onClose={() => setSelectedClient(null)}
+        client={selectedClient}
+        invoices={invoices}
+      />
       <FailedTasksModal 
         isOpen={isFailedTasksOpen} 
         onClose={() => setFailedTasksOpen(false)} 
@@ -561,10 +700,17 @@ function Dashboard({ user, onLogout, theme, toggleTheme }) {
   );
 }
 
-function MetricCard({ icon: Icon, label, value, note, tone }) {
+function MetricCard({ icon: Icon, label, value, note, tone, trend, trendDirection, onClick }) {
   return (
-    <div className={`metric-card ${tone}`}>
-      <div className="metric-icon"><Icon /></div>
+    <div className={`metric-card ${tone} ${onClick ? 'clickable' : ''}`} onClick={onClick}>
+      <div className="metric-card-header">
+        <div className="metric-icon"><Icon /></div>
+        {trend && (
+          <span className={`trend-badge ${trendDirection}`}>
+            {trendDirection === 'up' ? '↗' : '↘'} {trend}
+          </span>
+        )}
+      </div>
       <span>{label}</span>
       <strong>{value}</strong>
       <p>{note}</p>

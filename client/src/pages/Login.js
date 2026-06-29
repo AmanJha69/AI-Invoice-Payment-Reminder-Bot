@@ -50,8 +50,7 @@ function Login({ onLogin }) {
           <p className="eyebrow">AI invoice and payment reminder bot</p>
           <h1>Track invoices, automate reminders, and keep payment follow-ups moving.</h1>
           <p>
-            A focused dashboard for internship demos and real workflows: MongoDB data,
-            reminder status, client history, and n8n-ready bot operations in one place.
+            An enterprise-grade financial command center: seamlessly sync your MongoDB data, track client history, and execute AI-driven n8n bot operations all in one place.
           </p>
         </div>
         <div className="showcase-grid">
@@ -124,10 +123,6 @@ function Login({ onLogin }) {
               {loading ? 'Please wait...' : mode === 'login' ? 'Login to dashboard' : 'Create account'}
               <FiArrowRight />
             </button>
-            <div className="n8n-auth-note">
-              <strong>API endpoint</strong>
-              <span>{mode === 'login' ? '/api/auth/login' : '/api/auth/register'}</span>
-            </div>
           </form>
         </div>
       </section>
