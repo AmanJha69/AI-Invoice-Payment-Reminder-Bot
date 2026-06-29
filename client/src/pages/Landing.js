@@ -7,8 +7,8 @@ function Landing({ theme, toggleTheme }) {
   const navigate = useNavigate();
 
   // Generate random positions and delays for floating symbols
-  const symbols = ['₹', '$', '€', '£', '⚡', 'AI', '📈', '🚀', '💸'];
   const floatingElements = React.useMemo(() => {
+    const symbols = ['₹', '$', '€', '£', '⚡', 'AI', '📈', '🚀', '💸'];
     return Array.from({ length: 15 }).map((_, i) => ({
       id: i,
       symbol: symbols[Math.floor(Math.random() * symbols.length)],
